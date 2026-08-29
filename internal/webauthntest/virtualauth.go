@@ -89,6 +89,15 @@ func New(alg int64, opts ...Option) (*VirtualAuthenticator, error) {
 	return v, nil
 }
 
+// SetSignCount forces this authenticator's internal counter to n. The
+// next Authenticate call still applies its normal (possibly disabled)
+// increment on top of it. A real authenticator's counter only ever
+// advances; this exists so tests can construct the regression scenario
+// a real one wouldn't produce on its own.
+func (v *VirtualAuthenticator) SetSignCount(n uint32) {
+	v.signCount = n
+}
+
 // PublicKey returns the authenticator's public key.
 func (v *VirtualAuthenticator) PublicKey() crypto.PublicKey {
 	if v.ecPriv != nil {

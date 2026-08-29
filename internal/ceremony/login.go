@@ -22,6 +22,7 @@ var (
 	ErrSignatureVerification = errors.New("ceremony: signature verification failed")
 	ErrUnsupportedAlgorithm  = errors.New("ceremony: unsupported algorithm")
 	ErrCorruptStoredKey      = errors.New("ceremony: stored public key is corrupt")
+	ErrCounterRegression     = errors.New("ceremony: signature counter went backwards — suspected cloned authenticator")
 )
 
 // Authenticator verifies authentication (login) ceremonies.
@@ -131,8 +132,18 @@ func (a *Authenticator) Login(req AssertionRequest) (LoginResult, error) {
 		return LoginResult{}, err
 	}
 
-	// Clone detection (counter regression rejection) is added in the
-	// next commit; for now the reported counter is simply persisted.
+	// Counter regression is checked only now, after the signature has
+	// verified — branching on ad.SignCount before that would react to
+	// attacker-controlled data from someone who hasn't proven possession
+	// of the private key yet. A zero on either side means the
+	// authenticator doesn't implement the counter (the common case for
+	// modern platform authenticators, which report it as always 0) —
+	// that is "unsupported," not evidence of cloning, and must not be
+	// rejected; getting that case wrong locks out real devices.
+	if cred.SignCount != 0 && ad.SignCount != 0 && ad.SignCount <= cred.SignCount {
+		return LoginResult{}, fmt.Errorf("%w: stored=%d received=%d", ErrCounterRegression, cred.SignCount, ad.SignCount)
+	}
+
 	if err := a.Store.UpdateSignCount(req.CredentialID, ad.SignCount); err != nil {
 		return LoginResult{}, err
 	}

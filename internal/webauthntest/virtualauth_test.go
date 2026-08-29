@@ -249,6 +249,28 @@ func TestWithZeroCounter(t *testing.T) {
 	}
 }
 
+func TestSetSignCount(t *testing.T) {
+	v, err := New(cose.AlgES256)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	credentialID := []byte{0x01}
+	challenge := make([]byte, 32)
+
+	v.SetSignCount(41)
+	assertion, err := v.Authenticate(testRPID, testOrigin, challenge, credentialID)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	ad, err := authdata.Parse(assertion.AuthenticatorData)
+	if err != nil {
+		t.Fatalf("authdata.Parse: %v", err)
+	}
+	if ad.SignCount != 42 { // SetSignCount doesn't bypass the normal increment
+		t.Fatalf("SignCount = %d, want 42", ad.SignCount)
+	}
+}
+
 func TestNew_RejectsUnsupportedAlgorithm(t *testing.T) {
 	if _, err := New(-999); err == nil {
 		t.Fatalf("expected an error for an unsupported algorithm")
