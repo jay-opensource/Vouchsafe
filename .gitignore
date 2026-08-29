@@ -1,0 +1,6 @@
+/vouchsafe
+/vouchsafe.exe
+*.test
+*.prof
+vouchsafe.json
+*.pem
