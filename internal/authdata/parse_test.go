@@ -104,6 +104,9 @@ func TestParse_AttestedCredentialData(t *testing.T) {
 	if kty, ok := d.Attested.CredentialPublicKey.MapGetInt(1); !ok || kty.Int != 2 {
 		t.Fatalf("CredentialPublicKey kty: got %+v ok=%v", kty, ok)
 	}
+	if !bytes.Equal(d.Attested.CredentialPublicKeyRaw, key) {
+		t.Fatalf("CredentialPublicKeyRaw = %x, want %x", d.Attested.CredentialPublicKeyRaw, key)
+	}
 }
 
 func TestParse_AttestedPlusExtensions(t *testing.T) {

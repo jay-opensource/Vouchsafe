@@ -41,6 +41,12 @@ type AttestedCredentialData struct {
 	AAGUID              [16]byte
 	CredentialID        []byte
 	CredentialPublicKey cbor.Value // decoded COSE_Key map; internal/cose parses it into a crypto.PublicKey
+
+	// CredentialPublicKeyRaw is the exact CBOR-encoded bytes of the
+	// COSE_Key, for callers that need to persist it (production code
+	// never re-encodes CBOR, so this is the only way to store what was
+	// received without inventing a second key serialization format).
+	CredentialPublicKeyRaw []byte
 }
 
 // Data is a parsed authenticatorData structure (WebAuthn §6.1).
@@ -127,6 +133,7 @@ func parseAttestedCredentialData(buf []byte, pos int) (*AttestedCredentialData, 
 	a.CredentialID = append([]byte(nil), buf[pos:pos+credIDLen]...)
 	pos += credIDLen
 
+	pubKeyStart := pos
 	pubKey, n, err := cbor.Decode(buf[pos:])
 	if err != nil {
 		return nil, 0, fmt.Errorf("%w: credentialPublicKey: %v", ErrMalformed, err)
@@ -135,6 +142,7 @@ func parseAttestedCredentialData(buf []byte, pos int) (*AttestedCredentialData, 
 		return nil, 0, fmt.Errorf("%w: credentialPublicKey must be a CBOR map", ErrMalformed)
 	}
 	a.CredentialPublicKey = pubKey
+	a.CredentialPublicKeyRaw = append([]byte(nil), buf[pubKeyStart:pubKeyStart+n]...)
 	pos += n
 
 	return &a, pos, nil
