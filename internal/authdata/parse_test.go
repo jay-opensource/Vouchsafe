@@ -50,8 +50,8 @@ func TestParse_NoFlags(t *testing.T) {
 
 func TestParse_FlagBits(t *testing.T) {
 	cases := []struct {
-		name  string
-		flags byte
+		name           string
+		flags          byte
 		up, uv, be, bs bool
 	}{
 		{"UP only", flagUP, true, false, false, false},
@@ -176,7 +176,7 @@ func TestParse_PublicKeyMustBeMap(t *testing.T) {
 	buf := fixedHeader(flagAT, 0)
 	buf = append(buf, bytes.Repeat([]byte{0}, 16)...) // aaguid
 	buf = append(buf, 0x00, 0x00)                     // credentialId length 0
-	buf = append(buf, cbortest.Uint(1)...)             // a bare uint, not a map
+	buf = append(buf, cbortest.Uint(1)...)            // a bare uint, not a map
 	if _, err := Parse(buf); !errors.Is(err, ErrMalformed) {
 		t.Fatalf("got %v, want ErrMalformed", err)
 	}

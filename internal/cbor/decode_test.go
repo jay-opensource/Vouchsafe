@@ -135,9 +135,9 @@ func TestDecodeBoolNull(t *testing.T) {
 
 func TestDecodeRejectsFloat(t *testing.T) {
 	cases := [][]byte{
-		{0xf9, 0x00, 0x00},                         // float16
-		{0xfa, 0x00, 0x00, 0x00, 0x00},             // float32
-		{0xfb, 0, 0, 0, 0, 0, 0, 0, 0},              // float64
+		{0xf9, 0x00, 0x00},             // float16
+		{0xfa, 0x00, 0x00, 0x00, 0x00}, // float32
+		{0xfb, 0, 0, 0, 0, 0, 0, 0, 0}, // float64
 	}
 	for _, in := range cases {
 		_, _, err := Decode(in)

@@ -91,8 +91,8 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, creationOptions{
-		RP:   relyingParty{ID: s.RPID, Name: s.RPName},
-		User: userEntity{ID: base64.RawURLEncoding.EncodeToString(userID), Name: req.Username, DisplayName: req.Username},
+		RP:        relyingParty{ID: s.RPID, Name: s.RPName},
+		User:      userEntity{ID: base64.RawURLEncoding.EncodeToString(userID), Name: req.Username, DisplayName: req.Username},
 		Challenge: base64.RawURLEncoding.EncodeToString(challenge),
 		PubKeyCredParams: []publicKeyCredentialParam{
 			{Type: "public-key", Alg: cose.AlgES256},

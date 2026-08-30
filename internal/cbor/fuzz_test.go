@@ -36,14 +36,14 @@ func FuzzDecode(f *testing.F) {
 		// malformed / rejected inputs — the corpus the fuzzer should
 		// mutate away from panicking on
 		{},
-		{0x18},                   // truncated argument
-		{0x43, 0x01, 0x02},       // bstr length exceeds remaining input
-		{0x18, 0x17},             // non-canonical 1-byte form
-		{0x19, 0x00, 0xff},       // non-canonical 2-byte form
+		{0x18},                         // truncated argument
+		{0x43, 0x01, 0x02},             // bstr length exceeds remaining input
+		{0x18, 0x17},                   // non-canonical 1-byte form
+		{0x19, 0x00, 0xff},             // non-canonical 2-byte form
 		{0xa2, 0x02, 0x00, 0x01, 0x00}, // map keys out of canonical order
 		{0xa2, 0x01, 0x00, 0x01, 0x00}, // duplicate map key
-		{0xc0, 0x00},             // tag
-		{0x5f}, {0x9f}, {0xbf},   // indefinite length
+		{0xc0, 0x00},                   // tag
+		{0x5f}, {0x9f}, {0xbf},         // indefinite length
 		{0xf9, 0x00, 0x00}, {0xfa, 0, 0, 0, 0}, {0xfb, 0, 0, 0, 0, 0, 0, 0, 0}, // floats
 		nestedArray(MaxDepth+1, []byte{0x00}), // over the depth cap
 	}

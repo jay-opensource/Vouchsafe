@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	ErrMalformedToken  = errors.New("session: malformed token")
+	ErrMalformedToken   = errors.New("session: malformed token")
 	ErrInvalidSignature = errors.New("session: invalid signature")
 	ErrExpired          = errors.New("session: token expired")
 )
