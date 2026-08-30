@@ -1,0 +1,15 @@
+vouchsafe — dependency proof
+Generated: 2026-08-30, go1.25.3 windows/amd64
+
+$ go list -m all
+github.com/jay-opensource/Vouchsafe
+
+$ go mod graph
+github.com/jay-opensource/Vouchsafe go@1.25
+go@1.25 toolchain@go1.25
+
+Both list only the module itself and the Go toolchain version — no
+third-party dependency appears anywhere in the graph.
+
+$ CGO_ENABLED=0 go build -o vouchsafe ./cmd/vouchsafe
+(builds cleanly; nothing in this codebase uses cgo)

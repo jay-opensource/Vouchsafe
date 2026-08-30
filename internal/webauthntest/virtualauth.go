@@ -15,11 +15,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/jay-opensource/Vouchsafe/internal/cbortest"
 	"github.com/jay-opensource/Vouchsafe/internal/cose"
@@ -130,6 +133,75 @@ func (v *VirtualAuthenticator) Register(rpID, origin string, challenge, credenti
 		ClientDataJSON:    cd,
 		AttestationObject: attObj,
 	}, nil
+}
+
+// RegisterPackedSelf builds a registration ceremony using "packed"
+// self-attestation: the credential's own key signs the attestation
+// statement (no x5c) — what WebAuthn allows when the authenticator has
+// no separate attestation key.
+func (v *VirtualAuthenticator) RegisterPackedSelf(rpID, origin string, challenge, credentialID []byte) (RegistrationResult, error) {
+	cd, err := buildClientDataJSON("webauthn.create", origin, challenge)
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+	authData := v.buildAuthDataRegistration(rpID, credentialID)
+
+	cdHash := sha256.Sum256(cd)
+	signedOver := append(append([]byte(nil), authData...), cdHash[:]...)
+	digest := sha256.Sum256(signedOver)
+	sig, err := v.sign(digest[:])
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+
+	attObj := buildAttestationObjectPacked(authData, v.Alg, sig, nil)
+	return RegistrationResult{CredentialID: credentialID, ClientDataJSON: cd, AttestationObject: attObj}, nil
+}
+
+// RegisterPackedFull builds a registration ceremony using "packed" full
+// attestation: a freshly generated attestation keypair, distinct from
+// the credential's own key, wrapped in a self-signed certificate signs
+// the statement, with the certificate carried in x5c.
+func (v *VirtualAuthenticator) RegisterPackedFull(rpID, origin string, challenge, credentialID []byte) (RegistrationResult, error) {
+	cd, err := buildClientDataJSON("webauthn.create", origin, challenge)
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+	authData := v.buildAuthDataRegistration(rpID, credentialID)
+
+	attKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return RegistrationResult{}, fmt.Errorf("webauthntest: generate attestation key: %w", err)
+	}
+	certDER, err := selfSignedCert(attKey)
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+
+	cdHash := sha256.Sum256(cd)
+	signedOver := append(append([]byte(nil), authData...), cdHash[:]...)
+	digest := sha256.Sum256(signedOver)
+	sig, err := ecdsa.SignASN1(rand.Reader, attKey, digest[:])
+	if err != nil {
+		return RegistrationResult{}, fmt.Errorf("webauthntest: sign attestation: %w", err)
+	}
+
+	attObj := buildAttestationObjectPacked(authData, cose.AlgES256, sig, [][]byte{certDER})
+	return RegistrationResult{CredentialID: credentialID, ClientDataJSON: cd, AttestationObject: attObj}, nil
+}
+
+func selfSignedCert(key *ecdsa.PrivateKey) ([]byte, error) {
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "vouchsafe test attestation"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, fmt.Errorf("webauthntest: self-signed cert: %w", err)
+	}
+	return der, nil
 }
 
 // AssertionResult is what a real browser's PublicKeyCredential response
@@ -252,6 +324,30 @@ func buildAttestationObjectNone(authData []byte) []byte {
 	return cbortest.Map(
 		cbortest.Entry{Key: cbortest.Text("fmt"), Val: cbortest.Text("none")},
 		cbortest.Entry{Key: cbortest.Text("attStmt"), Val: cbortest.Map()},
+		cbortest.Entry{Key: cbortest.Text("authData"), Val: cbortest.Bytes(authData)},
+	)
+}
+
+// buildAttestationObjectPacked builds a "fmt": "packed" attestationObject.
+// attStmt keys ("alg", "sig", "x5c") all encode to the same length, so
+// canonical order here happens to match alphabetical order.
+func buildAttestationObjectPacked(authData []byte, alg int64, sig []byte, x5c [][]byte) []byte {
+	entries := []cbortest.Entry{
+		{Key: cbortest.Text("alg"), Val: cbortest.NegInt(alg)},
+		{Key: cbortest.Text("sig"), Val: cbortest.Bytes(sig)},
+	}
+	if len(x5c) > 0 {
+		certItems := make([][]byte, len(x5c))
+		for i, c := range x5c {
+			certItems[i] = cbortest.Bytes(c)
+		}
+		entries = append(entries, cbortest.Entry{Key: cbortest.Text("x5c"), Val: cbortest.Array(certItems...)})
+	}
+	attStmt := cbortest.Map(entries...)
+
+	return cbortest.Map(
+		cbortest.Entry{Key: cbortest.Text("fmt"), Val: cbortest.Text("packed")},
+		cbortest.Entry{Key: cbortest.Text("attStmt"), Val: attStmt},
 		cbortest.Entry{Key: cbortest.Text("authData"), Val: cbortest.Bytes(authData)},
 	)
 }

@@ -76,12 +76,6 @@ func (r *Registrar) Register(req RegistrationRequest) error {
 	if err != nil {
 		return err
 	}
-	if fmtStr != "none" {
-		return fmt.Errorf("%w: %q", ErrAttestationFormat, fmtStr)
-	}
-	if attStmt.Type != cbor.TypeMap || len(attStmt.Map) != 0 {
-		return fmt.Errorf("%w: fmt=none requires an empty attStmt", ErrAttestationStatement)
-	}
 
 	ad, err := authdata.Parse(rawAuthData)
 	if err != nil {
@@ -99,6 +93,13 @@ func (r *Registrar) Register(req RegistrationRequest) error {
 
 	key, err := cose.Parse(ad.Attested.CredentialPublicKey)
 	if err != nil {
+		return err
+	}
+
+	// Attestation is verified last, once the credential's own key is
+	// available — packed self-attestation needs it, and every format
+	// needs clientDataJSON for the signed-over digest.
+	if err := verifyAttestation(fmtStr, attStmt, rawAuthData, req.ClientDataJSON, key); err != nil {
 		return err
 	}
 

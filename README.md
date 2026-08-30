@@ -41,7 +41,7 @@ LOGGING IN
 
 **Attestation formats:**
 - `none` — supported. What platform authenticators overwhelmingly return; most relying parties decline attestation for privacy reasons.
-- `packed` — Tier 2, not yet implemented.
+- `packed` — supported, both self-attestation (credential's own key signs the statement) and full attestation (a certificate in `x5c` signs it). The certificate is verified as a signer, not chained to a trust anchor — that needs the FIDO Metadata Service, a remote lookup that's permanently out of scope.
 - Everything else (`tpm`, `android-key`, `android-safetynet`, `fido-u2f`, `apple`) — a named refusal, never a silent pass.
 
 **Permanently out of scope:** FIDO Metadata Service lookups (needs a remote service), enterprise attestation, U2F/CTAP1 legacy compatibility, WebAuthn extensions beyond reading the ED flag, account recovery flows, a user-management UI.

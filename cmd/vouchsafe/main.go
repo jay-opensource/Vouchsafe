@@ -133,7 +133,7 @@ func runServe(args []string) error {
 	}
 
 	fmt.Printf("vouchsafe  origin=%s  rp_id=%s  uv=%s\n", strings.Join(cfg.origins, ","), cfg.rpID, cfg.uvPolicy)
-	fmt.Printf("algorithms=ES256,RS256  attestation=none  store=%s (0600)\n", cfg.storePath)
+	fmt.Printf("algorithms=ES256,RS256  attestation=none,packed  store=%s (0600)\n", cfg.storePath)
 	if warn := loopbackWarning(cfg.listen); warn != "" {
 		fmt.Println(warn)
 	}

@@ -5,7 +5,10 @@
 package negative
 
 import (
+	"bytes"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -78,6 +81,56 @@ func (s *server) register(t *testing.T, username string, alg int64) (*webauthnte
 
 func clientData(typ, challengeB64, origin string) []byte {
 	return []byte(`{"type":"` + typ + `","challenge":"` + challengeB64 + `","origin":"` + origin + `"}`)
+}
+
+// validAttestedAuthData builds well-formed authenticatorData with the AT
+// flag set and a real (if arbitrary) COSE_Key — needed by tests that
+// must reach attestation-format verification, which runs only after
+// authData is fully parsed (matching the real WebAuthn verification
+// order: attestation attests to the credential, so the credential must
+// already be parsed).
+func validAttestedAuthData(t *testing.T, rpID string, credID []byte) []byte {
+	t.Helper()
+	rpIDHash := sha256.Sum256([]byte(rpID))
+	authData := make([]byte, 0, 128)
+	authData = append(authData, rpIDHash[:]...)
+	authData = append(authData, 0x01|0x04|0x40) // UP+UV+AT
+	authData = append(authData, 0x00, 0x00, 0x00, 0x01)
+	authData = append(authData, bytes.Repeat([]byte{0xaa}, 16)...) // aaguid
+	authData = append(authData, byte(len(credID)>>8), byte(len(credID)))
+	authData = append(authData, credID...)
+	authData = append(authData, fakeCOSEKey(t)...)
+	return authData
+}
+
+// fakeCOSEKey builds a genuinely valid EC2 COSE_Key (a real point on
+// P-256) — cose.Parse now runs before attestation verification, so a
+// placeholder with missing/invalid fields would fail before the test
+// ever reaches what it's actually checking.
+func fakeCOSEKey(t *testing.T) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate fake COSE key: %v", err)
+	}
+	x := padTo32(priv.X.Bytes())
+	y := padTo32(priv.Y.Bytes())
+	return cbortest.Map(
+		cbortest.Entry{Key: cbortest.Uint(1), Val: cbortest.Uint(2)}, // kty: EC2
+		cbortest.Entry{Key: cbortest.Uint(3), Val: cbortest.NegInt(cose.AlgES256)},
+		cbortest.Entry{Key: cbortest.NegInt(-1), Val: cbortest.Uint(1)}, // crv: P-256
+		cbortest.Entry{Key: cbortest.NegInt(-2), Val: cbortest.Bytes(x)},
+		cbortest.Entry{Key: cbortest.NegInt(-3), Val: cbortest.Bytes(y)},
+	)
+}
+
+func padTo32(b []byte) []byte {
+	if len(b) >= 32 {
+		return b[len(b)-32:]
+	}
+	out := make([]byte, 32)
+	copy(out[32-len(b):], b)
+	return out
 }
 
 // 1. Challenge altered by one byte -> not the issued challenge (W5)
@@ -496,7 +549,7 @@ func TestUnsupportedAttestationFormat_NamedRefusal(t *testing.T) {
 	attObj := cbortest.Map(
 		cbortest.Entry{Key: cbortest.Text("fmt"), Val: cbortest.Text("tpm")},
 		cbortest.Entry{Key: cbortest.Text("attStmt"), Val: cbortest.Map()},
-		cbortest.Entry{Key: cbortest.Text("authData"), Val: cbortest.Bytes([]byte{0x00})},
+		cbortest.Entry{Key: cbortest.Text("authData"), Val: cbortest.Bytes(validAttestedAuthData(t, rpID, credID))},
 	)
 	err = s.Registrar.Register(ceremony.RegistrationRequest{
 		Username: "alice", CredentialID: credID, ClientDataJSON: cd, AttestationObject: attObj,

@@ -21,6 +21,7 @@ Every third-party package this project would normally need, and what actually re
 | `google/gofuzz` | Fuzzing | `testing.F` native fuzzing — `internal/cbor/fuzz_test.go` |
 | `google/uuid` | Random IDs (per-registration WebAuthn user handle) | `crypto/rand` + `encoding/base64` |
 | any front-end framework | The demo page | `html/template` + vanilla `fetch`, no build step — `internal/httpapi/templates/demo.html.tmpl` |
+| — | Packed attestation verification (self and full, via `x5c`) | Hand-written `alg`/`sig`/`x5c` chain check — `internal/ceremony/attestation.go`. Full attestation is verified against the leaf certificate's own key via `crypto/x509.ParseCertificate`, deliberately not chained to a trust anchor (needs the FIDO Metadata Service — permanently out of scope). |
 
 ## Not yet built (Tier 2/3 — tracked, not claimed)
 
@@ -28,7 +29,6 @@ Every third-party package this project would normally need, and what actually re
 |---|---|---|
 | `mkcert` | Local TLS certificate for non-localhost demos | `crypto/x509` + `crypto/tls`, self-signed at startup (`--tls` flag) |
 | — | EdDSA/Ed25519 signature support | `crypto/ed25519` |
-| — | Packed attestation verification | Hand-written `alg`/`sig`/`x5c` chain check |
 
 ## Package Killer
 
