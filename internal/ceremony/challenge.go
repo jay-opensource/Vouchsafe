@@ -118,6 +118,16 @@ func (s *ChallengeStore) Consume(username string, purpose Purpose, got []byte) e
 	return nil
 }
 
+// SetClock overrides the store's time source. Production code never
+// calls this — the zero value already uses time.Now — but a caller
+// outside this package (the negative-test suite, for one) has no other
+// way to exercise the 120-second expiry without a real sleep.
+func (s *ChallengeStore) SetClock(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = now
+}
+
 func (s *ChallengeStore) purgeExpiredLocked() {
 	now := s.now()
 	for k, pc := range s.pending {
