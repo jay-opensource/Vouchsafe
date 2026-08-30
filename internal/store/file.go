@@ -25,6 +25,10 @@ type Credential struct {
 	SignCount uint32    `json:"sign_count"`
 	AAGUID    []byte    `json:"aaguid"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Nickname is a caller-supplied, display-only label ("Touch ID on
+	// MacBook", "YubiKey 5") — never used in any security decision.
+	Nickname string `json:"nickname,omitempty"`
 }
 
 type document struct {
@@ -143,6 +147,32 @@ func (s *Store) UpdateSignCount(id []byte, newCount uint32) error {
 		return fmt.Errorf("store: credential not found")
 	}
 	return s.saveLocked(creds)
+}
+
+// DeleteCredential permanently removes a credential. Callers must
+// authorize the request themselves before calling this — the store has
+// no notion of who's asking, only what's stored.
+func (s *Store) DeleteCredential(id []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	creds, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	key := credentialKey(id)
+	out := make([]Credential, 0, len(creds))
+	found := false
+	for _, c := range creds {
+		if credentialKey(c.ID) == key {
+			found = true
+			continue
+		}
+		out = append(out, c)
+	}
+	if !found {
+		return fmt.Errorf("store: credential not found")
+	}
+	return s.saveLocked(out)
 }
 
 func (s *Store) loadLocked() ([]Credential, error) {

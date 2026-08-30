@@ -44,3 +44,27 @@ func CheckFlags(policy UVPolicy, up, uv bool) (uvPerformed bool, err error) {
 	}
 	return uv, nil
 }
+
+// uvStrictness orders policies from most permissive to most demanding.
+var uvStrictness = map[UVPolicy]int{
+	UVDiscouraged: 0,
+	UVPreferred:   1,
+	UVRequired:    2,
+}
+
+// EffectivePolicy returns the stricter of floor (the server's
+// configured default) and requested (an optional per-ceremony value a
+// caller asked for, e.g. "require UV for this specific high-value
+// action"). A caller can only ever tighten the server's policy for a
+// single ceremony, never loosen it — an empty or unrecognized requested
+// value, or one weaker than floor, is ignored and floor applies.
+func EffectivePolicy(floor, requested UVPolicy) UVPolicy {
+	reqStrength, ok := uvStrictness[requested]
+	if !ok {
+		return floor
+	}
+	if reqStrength > uvStrictness[floor] {
+		return requested
+	}
+	return floor
+}

@@ -187,3 +187,7 @@ func TestE2E_RealBinary_RegisterAndLogin_ES256(t *testing.T) {
 func TestE2E_RealBinary_RegisterAndLogin_RS256(t *testing.T) {
 	testRealBinaryRegisterAndLogin(t, cose.AlgRS256)
 }
+
+func TestE2E_RealBinary_RegisterAndLogin_EdDSA(t *testing.T) {
+	testRealBinaryRegisterAndLogin(t, cose.AlgEdDSA)
+}

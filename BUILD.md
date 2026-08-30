@@ -42,9 +42,34 @@ Building reproducibly is good practice here, but **this project claims exactly o
 ```
 go build ./...
 go vet ./...
-go test ./...                                   # unit + integration, ~220 tests
+go test ./...                                   # unit + integration, ~250 tests
 go test -run FuzzDecode -fuzz=FuzzDecode -fuzztime=30s ./internal/cbor/
 go test ./tests/negative/...                     # the §9.3 negative-test suite alone
 go test ./tests/e2e/...                          # builds and runs the real binary as a subprocess
 go test -short ./...                             # skips the real-binary e2e test for fast iteration
 ```
+
+## Benchmark
+
+```
+go test -bench=. -benchmem ./internal/ceremony/
+```
+
+Two sets, published together deliberately: `BenchmarkVerifySignatureOnly_*` isolates raw
+cryptographic verification (no store I/O), `BenchmarkLogin_*` measures the full ceremony.
+On the reference machine (11th Gen Intel i5-11400H):
+
+```
+BenchmarkLogin_ES256-12                  130    9104563 ns/op   14941 B/op   114 allocs/op
+BenchmarkLogin_RS256-12                  130    9085998 ns/op   17103 B/op   105 allocs/op
+BenchmarkLogin_EdDSA-12                  133    9016225 ns/op   13285 B/op    93 allocs/op
+BenchmarkVerifySignatureOnly_ES256-12  19338      61643 ns/op     576 B/op    10 allocs/op
+BenchmarkVerifySignatureOnly_RS256-12  45493      26281 ns/op    1376 B/op     9 allocs/op
+BenchmarkVerifySignatureOnly_EdDSA-12  29152      41544 ns/op       0 B/op     0 allocs/op
+```
+
+The honest number: signature verification alone costs 26-62µs regardless of algorithm, but a
+full `Login()` call costs ~150-300x more, at ~9ms — almost entirely the fsync'd atomic file
+write `store.UpdateSignCount` performs on every successful login (§7 `internal/store`). That's
+the real cost of a durable counter update, not a slow verifier. A deployment that needed
+higher login throughput would batch or relax that write, not optimize the cryptography.

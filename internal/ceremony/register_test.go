@@ -24,7 +24,7 @@ const (
 	rTestOrigin = "https://example.com"
 )
 
-func newTestRegistrar(t *testing.T) *Registrar {
+func newTestRegistrar(t testing.TB) *Registrar {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "vouchsafe.json"))
 	if err != nil {
@@ -39,7 +39,7 @@ func newTestRegistrar(t *testing.T) *Registrar {
 	}
 }
 
-func randomCredentialID(t *testing.T) []byte {
+func randomCredentialID(t testing.TB) []byte {
 	t.Helper()
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {

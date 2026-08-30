@@ -3,6 +3,7 @@ package ceremony
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -46,6 +47,10 @@ type AssertionRequest struct {
 	ClientDataJSON    []byte
 	AuthenticatorData []byte
 	Signature         []byte
+
+	// UVOverride, if set, can only tighten a.UVPolicy for this one
+	// ceremony, never loosen it — see policy.EffectivePolicy.
+	UVOverride policy.UVPolicy
 }
 
 // LoginResult is the outcome of a successful authentication ceremony.
@@ -100,7 +105,7 @@ func (a *Authenticator) Login(req AssertionRequest) (LoginResult, error) {
 	if err := policy.CheckRPIDHash(a.RPID, ad.RPIDHash); err != nil {
 		return LoginResult{}, err
 	}
-	uvPerformed, err := policy.CheckFlags(a.UVPolicy, ad.UP, ad.UV)
+	uvPerformed, err := policy.CheckFlags(policy.EffectivePolicy(a.UVPolicy, req.UVOverride), ad.UP, ad.UV)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -126,9 +131,8 @@ func (a *Authenticator) Login(req AssertionRequest) (LoginResult, error) {
 
 	cdHash := sha256.Sum256(req.ClientDataJSON)
 	signedOver := append(append([]byte(nil), req.AuthenticatorData...), cdHash[:]...)
-	digest := sha256.Sum256(signedOver)
 
-	if err := verifySignature(cred.Algorithm, key.Public, digest[:], req.Signature); err != nil {
+	if err := verifySignature(cred.Algorithm, key.Public, signedOver, req.Signature); err != nil {
 		return LoginResult{}, err
 	}
 
@@ -151,14 +155,24 @@ func (a *Authenticator) Login(req AssertionRequest) (LoginResult, error) {
 	return LoginResult{Username: cred.Username, UVPerformed: uvPerformed}, nil
 }
 
-func verifySignature(alg int64, pub crypto.PublicKey, digest, sig []byte) error {
+// verifySignature checks sig over signedOver (authenticatorData ||
+// SHA256(clientDataJSON), un-hashed) under the given COSE algorithm.
+// Each branch hashes internally rather than being handed a pre-computed
+// digest, because that hashing step differs by algorithm: ECDSA and RSA
+// verify against a SHA-256 digest of the message, but Ed25519 (COSE
+// EdDSA) signs the message directly — it performs its own internal
+// SHA-512-based hashing as part of the algorithm, and handing it a
+// pre-hashed digest instead of the real message would silently verify
+// the wrong thing.
+func verifySignature(alg int64, pub crypto.PublicKey, signedOver, sig []byte) error {
 	switch alg {
 	case cose.AlgES256:
 		ecPub, ok := pub.(*ecdsa.PublicKey)
 		if !ok {
 			return fmt.Errorf("%w: expected an EC2 key for ES256", ErrUnsupportedAlgorithm)
 		}
-		if !ecdsa.VerifyASN1(ecPub, digest, sig) {
+		digest := sha256.Sum256(signedOver)
+		if !ecdsa.VerifyASN1(ecPub, digest[:], sig) {
 			return ErrSignatureVerification
 		}
 		return nil
@@ -167,7 +181,17 @@ func verifySignature(alg int64, pub crypto.PublicKey, digest, sig []byte) error 
 		if !ok {
 			return fmt.Errorf("%w: expected an RSA key for RS256", ErrUnsupportedAlgorithm)
 		}
-		if err := rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest, sig); err != nil {
+		digest := sha256.Sum256(signedOver)
+		if err := rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest[:], sig); err != nil {
+			return ErrSignatureVerification
+		}
+		return nil
+	case cose.AlgEdDSA:
+		edPub, ok := pub.(ed25519.PublicKey)
+		if !ok {
+			return fmt.Errorf("%w: expected an Ed25519 key for EdDSA", ErrUnsupportedAlgorithm)
+		}
+		if !ed25519.Verify(edPub, signedOver, sig) {
 			return ErrSignatureVerification
 		}
 		return nil

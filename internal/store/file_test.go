@@ -126,6 +126,43 @@ func TestUpdateSignCount_NotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteCredential(t *testing.T) {
+	s, _ := newTestStore(t)
+	must(t, s.AddCredential(Credential{ID: []byte{0x01}, Username: "alice"}))
+	must(t, s.AddCredential(Credential{ID: []byte{0x02}, Username: "alice"}))
+
+	if err := s.DeleteCredential([]byte{0x01}); err != nil {
+		t.Fatalf("DeleteCredential: %v", err)
+	}
+
+	if _, ok, err := s.FindByID([]byte{0x01}); err != nil || ok {
+		t.Fatalf("deleted credential still found: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := s.FindByID([]byte{0x02}); err != nil || !ok {
+		t.Fatalf("unrelated credential was affected: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestDeleteCredential_NotFound(t *testing.T) {
+	s, _ := newTestStore(t)
+	if err := s.DeleteCredential([]byte{0xff}); err == nil {
+		t.Fatalf("expected an error deleting a credential that doesn't exist")
+	}
+}
+
+func TestCredential_NicknamePersists(t *testing.T) {
+	s, _ := newTestStore(t)
+	must(t, s.AddCredential(Credential{ID: []byte{0x01}, Username: "alice", Nickname: "Touch ID on MacBook"}))
+
+	got, ok, err := s.FindByID([]byte{0x01})
+	if err != nil || !ok {
+		t.Fatalf("FindByID: ok=%v err=%v", ok, err)
+	}
+	if got.Nickname != "Touch ID on MacBook" {
+		t.Fatalf("Nickname = %q, want %q", got.Nickname, "Touch ID on MacBook")
+	}
+}
+
 func TestLoad_EmptyWhenFileMissing(t *testing.T) {
 	s, _ := newTestStore(t)
 	creds, err := s.Load()

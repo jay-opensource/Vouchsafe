@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
 	"os"
 	"path/filepath"
 	"testing"
@@ -147,5 +148,73 @@ func TestLoadOrCreateSessionKey_LoadsExisting(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestParseServeFlags_TLSDefault(t *testing.T) {
+	cfg, err := parseServeFlags(nil)
+	if err != nil {
+		t.Fatalf("parseServeFlags: %v", err)
+	}
+	if cfg.tlsEnabled {
+		t.Fatalf("tlsEnabled = true, want false by default")
+	}
+}
+
+func TestParseServeFlags_TLSEnabled(t *testing.T) {
+	cfg, err := parseServeFlags([]string{"--tls"})
+	if err != nil {
+		t.Fatalf("parseServeFlags: %v", err)
+	}
+	if !cfg.tlsEnabled {
+		t.Fatalf("tlsEnabled = false, want true")
+	}
+}
+
+func TestGenerateSelfSignedCert(t *testing.T) {
+	cert, fingerprint, err := generateSelfSignedCert("example.com")
+	if err != nil {
+		t.Fatalf("generateSelfSignedCert: %v", err)
+	}
+	if len(fingerprint) != 64 { // hex-encoded SHA-256
+		t.Fatalf("fingerprint length = %d, want 64", len(fingerprint))
+	}
+	if len(cert.Certificate) != 1 {
+		t.Fatalf("Certificate chain length = %d, want 1", len(cert.Certificate))
+	}
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	if parsed.Subject.CommonName != "example.com" {
+		t.Fatalf("CommonName = %q, want example.com", parsed.Subject.CommonName)
+	}
+	if len(parsed.DNSNames) != 1 || parsed.DNSNames[0] != "example.com" {
+		t.Fatalf("DNSNames = %v, want [example.com]", parsed.DNSNames)
+	}
+	if parsed.NotAfter.Before(parsed.NotBefore) {
+		t.Fatalf("NotAfter before NotBefore")
+	}
+}
+
+func TestGenerateSelfSignedCert_DistinctSerials(t *testing.T) {
+	cert1, _, err := generateSelfSignedCert("example.com")
+	if err != nil {
+		t.Fatalf("generateSelfSignedCert (1): %v", err)
+	}
+	cert2, _, err := generateSelfSignedCert("example.com")
+	if err != nil {
+		t.Fatalf("generateSelfSignedCert (2): %v", err)
+	}
+	p1, err := x509.ParseCertificate(cert1.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse 1: %v", err)
+	}
+	p2, err := x509.ParseCertificate(cert2.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse 2: %v", err)
+	}
+	if p1.SerialNumber.Cmp(p2.SerialNumber) == 0 {
+		t.Fatalf("two certificates got the same serial number")
 	}
 }

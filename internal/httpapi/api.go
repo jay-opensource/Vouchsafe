@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jay-opensource/Vouchsafe/internal/ceremony"
 	"github.com/jay-opensource/Vouchsafe/internal/cose"
+	"github.com/jay-opensource/Vouchsafe/internal/policy"
 	"github.com/jay-opensource/Vouchsafe/internal/session"
 	"github.com/jay-opensource/Vouchsafe/internal/store"
 )
@@ -38,7 +40,21 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /login/begin", s.handleLoginBegin)
 	mux.HandleFunc("POST /login/finish", s.handleLoginFinish)
 	mux.HandleFunc("GET /demo", s.handleDemoPage)
+	mux.HandleFunc("GET /credentials", s.handleListCredentials)
+	mux.HandleFunc("DELETE /credentials/{id}", s.handleDeleteCredential)
 	return mux
+}
+
+// authenticate extracts and verifies a bearer session token, returning
+// its claims. Used only by the credential-management endpoints — the
+// four ceremony endpoints above need no prior session, that's the point.
+func (s *Server) authenticate(r *http.Request) (session.Claims, error) {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return session.Claims{}, session.ErrMalformedToken
+	}
+	return s.Sessions.Verify(strings.TrimPrefix(h, prefix))
 }
 
 type registerBeginRequest struct {
@@ -97,6 +113,7 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		PubKeyCredParams: []publicKeyCredentialParam{
 			{Type: "public-key", Alg: cose.AlgES256},
 			{Type: "public-key", Alg: cose.AlgRS256},
+			{Type: "public-key", Alg: cose.AlgEdDSA},
 		},
 		Timeout:     int64(ceremony.ChallengeTTL / time.Millisecond),
 		Attestation: "none",
@@ -108,6 +125,13 @@ type registerFinishRequest struct {
 	RawID             string `json:"rawId"`
 	ClientDataJSON    string `json:"clientDataJSON"`
 	AttestationObject string `json:"attestationObject"`
+
+	// Nickname is an optional, display-only label for this credential
+	// ("Touch ID on MacBook"). UV, if set, can only tighten the server's
+	// configured UV policy for this one registration, never loosen it
+	// (policy.EffectivePolicy).
+	Nickname string `json:"nickname"`
+	UV       string `json:"uv"`
 }
 
 func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +153,8 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		CredentialID:      credID,
 		ClientDataJSON:    clientDataJSON,
 		AttestationObject: attestationObject,
+		Nickname:          req.Nickname,
+		UVOverride:        policy.UVPolicy(req.UV),
 	}); err != nil {
 		s.logErr("register/finish", err)
 		writeError(w, http.StatusBadRequest, "registration failed")
@@ -151,48 +177,91 @@ type requestOptions struct {
 	Challenge        string              `json:"challenge"`
 	Timeout          int64               `json:"timeout"`
 	UserVerification string              `json:"userVerification"`
-	AllowCredentials []allowedCredential `json:"allowCredentials"`
+	AllowCredentials []allowedCredential `json:"allowCredentials,omitempty"`
+
+	// FlowID is set only for a discoverable/usernameless begin (empty
+	// username) — an opaque token the client must echo back at
+	// /login/finish so the server can locate the pending challenge. It
+	// is not part of the WebAuthn PublicKeyCredentialRequestOptions
+	// shape; it is vouchsafe's own bookkeeping field, and plays no part
+	// in deciding who the ceremony authenticates as (see AssertionRequest
+	// in internal/ceremony — that's resolved from the credential, W8).
+	FlowID string `json:"flowId,omitempty"`
 }
 
 func (s *Server) handleLoginBegin(w http.ResponseWriter, r *http.Request) {
 	var req loginBeginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 
-	creds, err := s.Store.FindByUsername(req.Username)
-	if err != nil {
-		s.logErr("login/begin", err)
-		writeError(w, http.StatusInternalServerError, "could not start login")
-		return
+	// The username (or, for a discoverable/usernameless flow, a random
+	// flow ID) only ever routes to the pending challenge below — see
+	// AssertionRequest.Username's doc comment in internal/ceremony.
+	challengeKey := req.Username
+	var allow []allowedCredential
+	if req.Username == "" {
+		flowID, err := randomFlowID()
+		if err != nil {
+			s.logErr("login/begin", err)
+			writeError(w, http.StatusInternalServerError, "could not start login")
+			return
+		}
+		challengeKey = flowID
+	} else {
+		creds, err := s.Store.FindByUsername(req.Username)
+		if err != nil {
+			s.logErr("login/begin", err)
+			writeError(w, http.StatusInternalServerError, "could not start login")
+			return
+		}
+		for _, c := range creds {
+			allow = append(allow, allowedCredential{Type: "public-key", ID: base64.RawURLEncoding.EncodeToString(c.ID)})
+		}
 	}
-	challenge, err := s.Authenticator.Challenges.Issue(req.Username, ceremony.PurposeLogin)
+
+	challenge, err := s.Authenticator.Challenges.Issue(challengeKey, ceremony.PurposeLogin)
 	if err != nil {
 		s.logErr("login/begin", err)
 		writeError(w, http.StatusInternalServerError, "could not start login")
 		return
 	}
 
-	allow := make([]allowedCredential, 0, len(creds))
-	for _, c := range creds {
-		allow = append(allow, allowedCredential{Type: "public-key", ID: base64.RawURLEncoding.EncodeToString(c.ID)})
-	}
-	writeJSON(w, http.StatusOK, requestOptions{
+	resp := requestOptions{
 		RPID:             s.RPID,
 		Challenge:        base64.RawURLEncoding.EncodeToString(challenge),
 		Timeout:          int64(ceremony.ChallengeTTL / time.Millisecond),
 		UserVerification: string(s.Authenticator.UVPolicy),
 		AllowCredentials: allow,
-	})
+	}
+	if req.Username == "" {
+		resp.FlowID = challengeKey
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func randomFlowID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 type loginFinishRequest struct {
-	Username          string `json:"username"`
+	Username string `json:"username"`
+	// FlowID is required instead of Username when completing a
+	// discoverable/usernameless login (see requestOptions.FlowID).
+	FlowID            string `json:"flowId"`
 	RawID             string `json:"rawId"`
 	ClientDataJSON    string `json:"clientDataJSON"`
 	AuthenticatorData string `json:"authenticatorData"`
 	Signature         string `json:"signature"`
+
+	// UV, if set, can only tighten the server's configured UV policy for
+	// this one login, never loosen it (policy.EffectivePolicy).
+	UV string `json:"uv"`
 }
 
 type loginFinishResponse struct {
@@ -216,12 +285,18 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	challengeKey := req.Username
+	if challengeKey == "" {
+		challengeKey = req.FlowID
+	}
+
 	result, err := s.Authenticator.Login(ceremony.AssertionRequest{
-		Username:          req.Username,
+		Username:          challengeKey,
 		CredentialID:      credID,
 		ClientDataJSON:    clientDataJSON,
 		AuthenticatorData: authData,
 		Signature:         sig,
+		UVOverride:        policy.UVPolicy(req.UV),
 	})
 	if err != nil {
 		s.logErr("login/finish", err)
@@ -236,6 +311,75 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, loginFinishResponse{Token: token, User: result.Username, UV: result.UVPerformed})
+}
+
+type credentialSummary struct {
+	ID        string    `json:"id"`
+	Algorithm int64     `json:"algorithm"`
+	CreatedAt time.Time `json:"createdAt"`
+	AAGUID    string    `json:"aaguid"`
+	Nickname  string    `json:"nickname,omitempty"`
+}
+
+// handleListCredentials returns the caller's own credentials — resolved
+// from their session token, never from a query parameter, so one user
+// can't list another's by asking.
+func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
+	claims, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	creds, err := s.Store.FindByUsername(claims.Username)
+	if err != nil {
+		s.logErr("credentials/list", err)
+		writeError(w, http.StatusInternalServerError, "could not list credentials")
+		return
+	}
+	out := make([]credentialSummary, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, credentialSummary{
+			ID:        base64.RawURLEncoding.EncodeToString(c.ID),
+			Algorithm: c.Algorithm,
+			CreatedAt: c.CreatedAt,
+			AAGUID:    base64.RawURLEncoding.EncodeToString(c.AAGUID),
+			Nickname:  c.Nickname,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleDeleteCredential revokes one of the caller's own credentials.
+// Ownership is checked before deleting; a credential that doesn't exist
+// and one that exists but belongs to someone else get the identical 404
+// — the difference isn't something a non-owner should be able to probe.
+func (s *Server) handleDeleteCredential(w http.ResponseWriter, r *http.Request) {
+	claims, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	credID, err := base64.RawURLEncoding.DecodeString(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid credential id")
+		return
+	}
+	cred, ok, err := s.Store.FindByID(credID)
+	if err != nil {
+		s.logErr("credentials/delete", err)
+		writeError(w, http.StatusInternalServerError, "could not delete credential")
+		return
+	}
+	if !ok || cred.Username != claims.Username {
+		writeError(w, http.StatusNotFound, "credential not found")
+		return
+	}
+	if err := s.Store.DeleteCredential(credID); err != nil {
+		s.logErr("credentials/delete", err)
+		writeError(w, http.StatusInternalServerError, "could not delete credential")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type errorResponse struct {

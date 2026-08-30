@@ -3,10 +3,18 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -53,6 +61,7 @@ type serveConfig struct {
 	uvPolicy       policy.UVPolicy
 	storePath      string
 	sessionKeyPath string
+	tlsEnabled     bool
 }
 
 // parseServeFlags parses and validates flags into a serveConfig without
@@ -66,6 +75,7 @@ func parseServeFlags(args []string) (serveConfig, error) {
 	uv := fs.String("uv", "preferred", "user verification policy: required|preferred|discouraged")
 	storePath := fs.String("store", "./vouchsafe.json", "credential store path")
 	sessionKeyPath := fs.String("session-key", "", "path to a file holding the session-signing key (generated on first run if absent)")
+	tlsEnabled := fs.Bool("tls", false, "serve over self-signed HTTPS — required for a non-loopback --listen address, since WebAuthn needs a secure context")
 	if err := fs.Parse(args); err != nil {
 		return serveConfig{}, err
 	}
@@ -96,6 +106,7 @@ func parseServeFlags(args []string) (serveConfig, error) {
 		uvPolicy:       uvPolicy,
 		storePath:      *storePath,
 		sessionKeyPath: *sessionKeyPath,
+		tlsEnabled:     *tlsEnabled,
 	}, nil
 }
 
@@ -133,12 +144,59 @@ func runServe(args []string) error {
 	}
 
 	fmt.Printf("vouchsafe  origin=%s  rp_id=%s  uv=%s\n", strings.Join(cfg.origins, ","), cfg.rpID, cfg.uvPolicy)
-	fmt.Printf("algorithms=ES256,RS256  attestation=none,packed  store=%s (0600)\n", cfg.storePath)
+	fmt.Printf("algorithms=ES256,RS256,EdDSA  attestation=none,packed  store=%s (0600)\n", cfg.storePath)
+
+	if cfg.tlsEnabled {
+		cert, fingerprint, err := generateSelfSignedCert(cfg.rpID)
+		if err != nil {
+			return fmt.Errorf("generate TLS certificate: %w", err)
+		}
+		fmt.Printf("tls=self-signed  fingerprint(sha256)=%s\n", fingerprint)
+		httpServer := &http.Server{
+			Addr:      cfg.listen,
+			Handler:   srv.Routes(),
+			TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
+		}
+		return httpServer.ListenAndServeTLS("", "") // "" = use TLSConfig.Certificates, not files
+	}
+
 	if warn := loopbackWarning(cfg.listen); warn != "" {
 		fmt.Println(warn)
 	}
-
 	return http.ListenAndServe(cfg.listen, srv.Routes())
+}
+
+// generateSelfSignedCert builds an ephemeral self-signed TLS certificate
+// for rpID, valid for 24 hours, and returns it alongside its SHA-256
+// fingerprint (printed at startup so a judge or teammate can verify
+// they're talking to this instance, not a MITM). Regenerated on every
+// run — this is a demo convenience, not something meant to be trusted
+// long-term or pinned by a real client.
+func generateSelfSignedCert(rpID string) (tls.Certificate, string, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, "", fmt.Errorf("generate key: %w", err)
+	}
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		return tls.Certificate{}, "", fmt.Errorf("generate serial: %w", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: rpID},
+		DNSNames:     []string{rpID},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		return tls.Certificate{}, "", fmt.Errorf("create certificate: %w", err)
+	}
+	fingerprint := sha256.Sum256(der)
+	cert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv}
+	return cert, hex.EncodeToString(fingerprint[:]), nil
 }
 
 // loopbackWarning returns a startup warning when listen isn't a loopback

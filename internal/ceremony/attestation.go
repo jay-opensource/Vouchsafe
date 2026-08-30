@@ -75,13 +75,12 @@ func verifyPackedAttestation(attStmt cbor.Value, rawAuthData, clientDataJSON []b
 
 	cdHash := sha256.Sum256(clientDataJSON)
 	signedOver := append(append([]byte(nil), rawAuthData...), cdHash[:]...)
-	digest := sha256.Sum256(signedOver)
 
 	if len(stmt.X5C) == 0 {
 		if stmt.Alg != credentialKey.Alg {
 			return fmt.Errorf("%w: packed self-attestation alg does not match the credential's own algorithm", ErrAttestationStatement)
 		}
-		if err := verifySignature(stmt.Alg, credentialKey.Public, digest[:], stmt.Sig); err != nil {
+		if err := verifySignature(stmt.Alg, credentialKey.Public, signedOver, stmt.Sig); err != nil {
 			return fmt.Errorf("%w: packed self-attestation signature does not verify", ErrAttestationStatement)
 		}
 		return nil
@@ -91,7 +90,7 @@ func verifyPackedAttestation(attStmt cbor.Value, rawAuthData, clientDataJSON []b
 	if err != nil {
 		return fmt.Errorf("%w: packed attestation certificate: %v", ErrAttestationStatement, err)
 	}
-	if err := verifySignature(stmt.Alg, cert.PublicKey, digest[:], stmt.Sig); err != nil {
+	if err := verifySignature(stmt.Alg, cert.PublicKey, signedOver, stmt.Sig); err != nil {
 		return fmt.Errorf("%w: packed full-attestation signature does not verify", ErrAttestationStatement)
 	}
 	return nil

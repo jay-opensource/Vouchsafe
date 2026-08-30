@@ -37,7 +37,7 @@ func signWithForgedRSAKey(t *testing.T, priv *rsa.PrivateKey, clientDataJSON, au
 // newTestServer builds a Registrar and an Authenticator sharing one
 // ChallengeStore, one origin allowlist, and one credential store, as if
 // they were the two ceremony handlers of a single running vouchsafe.
-func newTestServer(t *testing.T) (*Registrar, *Authenticator) {
+func newTestServer(t testing.TB) (*Registrar, *Authenticator) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "vouchsafe.json"))
 	if err != nil {
@@ -54,7 +54,7 @@ func newTestServer(t *testing.T) (*Registrar, *Authenticator) {
 // registerTestUser runs a full registration through the harness and the
 // real Registrar, returning the authenticator and credential ID for
 // subsequent login tests.
-func registerTestUser(t *testing.T, reg *Registrar, username string, alg int64) (*webauthntest.VirtualAuthenticator, []byte) {
+func registerTestUser(t testing.TB, reg *Registrar, username string, alg int64) (*webauthntest.VirtualAuthenticator, []byte) {
 	t.Helper()
 	va, err := webauthntest.New(alg)
 	if err != nil {
@@ -114,6 +114,7 @@ func testLoginSuccess(t *testing.T, alg int64) {
 
 func TestLogin_Success_ES256(t *testing.T) { testLoginSuccess(t, cose.AlgES256) }
 func TestLogin_Success_RS256(t *testing.T) { testLoginSuccess(t, cose.AlgRS256) }
+func TestLogin_Success_EdDSA(t *testing.T) { testLoginSuccess(t, cose.AlgEdDSA) }
 
 func TestLogin_ChallengeNeverIssued(t *testing.T) {
 	reg, auth := newTestServer(t)

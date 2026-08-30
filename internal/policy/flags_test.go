@@ -66,3 +66,33 @@ func TestCheckFlags_InvalidPolicy(t *testing.T) {
 		t.Fatalf("got %v, want ErrInvalidUVPolicy", err)
 	}
 }
+
+func TestEffectivePolicy_RequestedStricterWins(t *testing.T) {
+	if got := EffectivePolicy(UVPreferred, UVRequired); got != UVRequired {
+		t.Fatalf("got %q, want %q", got, UVRequired)
+	}
+}
+
+func TestEffectivePolicy_RequestedWeakerIgnored(t *testing.T) {
+	if got := EffectivePolicy(UVRequired, UVDiscouraged); got != UVRequired {
+		t.Fatalf("got %q, want %q — a caller must never be able to loosen the server floor", got, UVRequired)
+	}
+}
+
+func TestEffectivePolicy_RequestedEqualKeepsFloor(t *testing.T) {
+	if got := EffectivePolicy(UVPreferred, UVPreferred); got != UVPreferred {
+		t.Fatalf("got %q, want %q", got, UVPreferred)
+	}
+}
+
+func TestEffectivePolicy_EmptyRequestedKeepsFloor(t *testing.T) {
+	if got := EffectivePolicy(UVRequired, ""); got != UVRequired {
+		t.Fatalf("got %q, want %q", got, UVRequired)
+	}
+}
+
+func TestEffectivePolicy_InvalidRequestedIgnored(t *testing.T) {
+	if got := EffectivePolicy(UVPreferred, UVPolicy("bogus")); got != UVPreferred {
+		t.Fatalf("got %q, want %q — an unrecognized requested value must not override the floor", got, UVPreferred)
+	}
+}

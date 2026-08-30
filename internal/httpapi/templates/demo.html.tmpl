@@ -24,6 +24,7 @@
 <div class="row">
   <button id="registerBtn">Register</button>
   <button id="loginBtn">Log in</button>
+  <button id="usernamelessBtn">Log in (usernameless)</button>
 </div>
 <pre id="status">Ready.</pre>
 
@@ -83,28 +84,47 @@ document.getElementById('registerBtn').addEventListener('click', async () => {
   }
 });
 
+// doLogin drives /login/begin -> navigator.credentials.get -> /login/finish.
+// beginUsername is the empty string for a discoverable/usernameless
+// login: the browser then shows every resident credential it holds for
+// this origin (no allowCredentials filter), and the server tells us who
+// logged in via the response — the flowId round trip only ever routes
+// to the right pending challenge, it never decides identity (W8).
+async function doLogin(beginUsername) {
+  setStatus('Requesting challenge...');
+  const opts = await post('/login/begin', {username: beginUsername});
+  opts.challenge = b64urlToBuf(opts.challenge);
+  if (opts.allowCredentials) {
+    opts.allowCredentials = opts.allowCredentials.map(c => Object.assign({}, c, {id: b64urlToBuf(c.id)}));
+  }
+
+  setStatus('Touch your sensor or security key...');
+  const cred = await navigator.credentials.get({publicKey: opts});
+
+  const result = await post('/login/finish', {
+    username: beginUsername,
+    flowId: opts.flowId || '',
+    rawId: bufToB64url(cred.rawId),
+    clientDataJSON: bufToB64url(cred.response.clientDataJSON),
+    authenticatorData: bufToB64url(cred.response.authenticatorData),
+    signature: bufToB64url(cred.response.signature),
+  });
+  setStatus('Logged in as ' + result.user + ' (uv=' + result.uv + '). Steal vouchsafe.json and you get nothing you can log in with -- there are no passwords here.', 'ok');
+}
+
 document.getElementById('loginBtn').addEventListener('click', async () => {
   try {
-    setStatus('Requesting challenge...');
-    const opts = await post('/login/begin', {username: username()});
-    opts.challenge = b64urlToBuf(opts.challenge);
-    if (opts.allowCredentials) {
-      opts.allowCredentials = opts.allowCredentials.map(c => Object.assign({}, c, {id: b64urlToBuf(c.id)}));
-    }
-
-    setStatus('Touch your sensor or security key...');
-    const cred = await navigator.credentials.get({publicKey: opts});
-
-    const result = await post('/login/finish', {
-      username: username(),
-      rawId: bufToB64url(cred.rawId),
-      clientDataJSON: bufToB64url(cred.response.clientDataJSON),
-      authenticatorData: bufToB64url(cred.response.authenticatorData),
-      signature: bufToB64url(cred.response.signature),
-    });
-    setStatus('Logged in as ' + result.user + ' (uv=' + result.uv + '). Steal vouchsafe.json and you get nothing you can log in with -- there are no passwords here.', 'ok');
+    await doLogin(username());
   } catch (err) {
     setStatus('Login failed: ' + err.message, 'err');
+  }
+});
+
+document.getElementById('usernamelessBtn').addEventListener('click', async () => {
+  try {
+    await doLogin('');
+  } catch (err) {
+    setStatus('Usernameless login failed: ' + err.message, 'err');
   }
 });
 </script>

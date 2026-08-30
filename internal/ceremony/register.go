@@ -40,6 +40,15 @@ type RegistrationRequest struct {
 	CredentialID      []byte
 	ClientDataJSON    []byte
 	AttestationObject []byte
+
+	// UVOverride, if set, can only tighten r.UVPolicy for this one
+	// ceremony, never loosen it — see policy.EffectivePolicy.
+	UVOverride policy.UVPolicy
+
+	// Nickname is a caller-supplied, display-only label for this
+	// credential ("Touch ID on MacBook"). Never used in any security
+	// decision.
+	Nickname string
 }
 
 type clientDataFields struct {
@@ -84,7 +93,7 @@ func (r *Registrar) Register(req RegistrationRequest) error {
 	if err := policy.CheckRPIDHash(r.RPID, ad.RPIDHash); err != nil {
 		return err
 	}
-	if _, err := policy.CheckFlags(r.UVPolicy, ad.UP, ad.UV); err != nil {
+	if _, err := policy.CheckFlags(policy.EffectivePolicy(r.UVPolicy, req.UVOverride), ad.UP, ad.UV); err != nil {
 		return err
 	}
 	if !ad.AT || ad.Attested == nil {
@@ -111,6 +120,7 @@ func (r *Registrar) Register(req RegistrationRequest) error {
 		SignCount: ad.SignCount,
 		AAGUID:    append([]byte(nil), ad.Attested.AAGUID[:]...),
 		CreatedAt: time.Now().UTC(),
+		Nickname:  req.Nickname,
 	})
 }
 

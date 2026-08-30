@@ -11,6 +11,7 @@ package webauthntest
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -43,6 +44,8 @@ type VirtualAuthenticator struct {
 
 	ecPriv  *ecdsa.PrivateKey
 	rsaPriv *rsa.PrivateKey
+	edPriv  ed25519.PrivateKey
+	edPub   ed25519.PublicKey
 
 	signCount   uint32
 	zeroCounter bool
@@ -59,7 +62,8 @@ func WithZeroCounter() Option {
 }
 
 // New creates a virtual authenticator with a freshly generated keypair
-// for the given COSE algorithm (cose.AlgES256 or cose.AlgRS256).
+// for the given COSE algorithm (cose.AlgES256, cose.AlgRS256, or
+// cose.AlgEdDSA).
 func New(alg int64, opts ...Option) (*VirtualAuthenticator, error) {
 	v := &VirtualAuthenticator{Alg: alg, signCount: 1}
 	if _, err := rand.Read(v.AAGUID[:]); err != nil {
@@ -79,6 +83,12 @@ func New(alg int64, opts ...Option) (*VirtualAuthenticator, error) {
 			return nil, fmt.Errorf("webauthntest: generate RSA key: %w", err)
 		}
 		v.rsaPriv = priv
+	case cose.AlgEdDSA:
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("webauthntest: generate Ed25519 key: %w", err)
+		}
+		v.edPub, v.edPriv = pub, priv
 	default:
 		return nil, fmt.Errorf("webauthntest: unsupported algorithm %d", alg)
 	}
@@ -103,10 +113,14 @@ func (v *VirtualAuthenticator) SetSignCount(n uint32) {
 
 // PublicKey returns the authenticator's public key.
 func (v *VirtualAuthenticator) PublicKey() crypto.PublicKey {
-	if v.ecPriv != nil {
+	switch {
+	case v.ecPriv != nil:
 		return &v.ecPriv.PublicKey
+	case v.rsaPriv != nil:
+		return &v.rsaPriv.PublicKey
+	default:
+		return v.edPub
 	}
-	return &v.rsaPriv.PublicKey
 }
 
 // RegistrationResult is what a real browser's PublicKeyCredential
@@ -148,8 +162,7 @@ func (v *VirtualAuthenticator) RegisterPackedSelf(rpID, origin string, challenge
 
 	cdHash := sha256.Sum256(cd)
 	signedOver := append(append([]byte(nil), authData...), cdHash[:]...)
-	digest := sha256.Sum256(signedOver)
-	sig, err := v.sign(digest[:])
+	sig, err := v.sign(signedOver)
 	if err != nil {
 		return RegistrationResult{}, err
 	}
@@ -227,9 +240,8 @@ func (v *VirtualAuthenticator) Authenticate(rpID, origin string, challenge, cred
 
 	cdHash := sha256.Sum256(cd)
 	signedOver := append(append([]byte(nil), authData...), cdHash[:]...)
-	digest := sha256.Sum256(signedOver)
 
-	sig, err := v.sign(digest[:])
+	sig, err := v.sign(signedOver)
 	if err != nil {
 		return AssertionResult{}, err
 	}
@@ -242,12 +254,21 @@ func (v *VirtualAuthenticator) Authenticate(rpID, origin string, challenge, cred
 	}, nil
 }
 
-func (v *VirtualAuthenticator) sign(digest []byte) ([]byte, error) {
+// sign takes signedOver un-hashed, matching real WebAuthn signing:
+// ECDSA and RSA sign a SHA-256 digest of the message, but Ed25519
+// signs the message directly (it hashes internally with SHA-512 as
+// part of the algorithm) — hashing it again first would produce a
+// signature no real Ed25519 authenticator would ever generate.
+func (v *VirtualAuthenticator) sign(signedOver []byte) ([]byte, error) {
 	switch v.Alg {
 	case cose.AlgES256:
-		return ecdsa.SignASN1(rand.Reader, v.ecPriv, digest)
+		digest := sha256.Sum256(signedOver)
+		return ecdsa.SignASN1(rand.Reader, v.ecPriv, digest[:])
 	case cose.AlgRS256:
-		return rsa.SignPKCS1v15(rand.Reader, v.rsaPriv, crypto.SHA256, digest)
+		digest := sha256.Sum256(signedOver)
+		return rsa.SignPKCS1v15(rand.Reader, v.rsaPriv, crypto.SHA256, digest[:])
+	case cose.AlgEdDSA:
+		return ed25519.Sign(v.edPriv, signedOver), nil
 	default:
 		return nil, fmt.Errorf("webauthntest: unsupported algorithm %d", v.Alg)
 	}
@@ -284,10 +305,14 @@ func (v *VirtualAuthenticator) buildAuthDataAssertion(rpID string) []byte {
 }
 
 func (v *VirtualAuthenticator) encodePublicKey() []byte {
-	if v.ecPriv != nil {
+	switch {
+	case v.ecPriv != nil:
 		return encodeCOSEKeyEC2(&v.ecPriv.PublicKey, v.Alg)
+	case v.rsaPriv != nil:
+		return encodeCOSEKeyRSA(&v.rsaPriv.PublicKey, v.Alg)
+	default:
+		return encodeCOSEKeyOKP(v.edPub, v.Alg)
 	}
-	return encodeCOSEKeyRSA(&v.rsaPriv.PublicKey, v.Alg)
 }
 
 // encodeCOSEKeyEC2 and encodeCOSEKeyRSA are the encoder counterparts to
@@ -312,6 +337,15 @@ func encodeCOSEKeyRSA(pub *rsa.PublicKey, alg int64) []byte {
 		cbortest.Entry{Key: cbortest.Uint(3), Val: cbortest.NegInt(alg)},
 		cbortest.Entry{Key: cbortest.NegInt(-1), Val: cbortest.Bytes(pub.N.Bytes())},
 		cbortest.Entry{Key: cbortest.NegInt(-2), Val: cbortest.Bytes(big.NewInt(int64(pub.E)).Bytes())},
+	)
+}
+
+func encodeCOSEKeyOKP(pub ed25519.PublicKey, alg int64) []byte {
+	return cbortest.Map(
+		cbortest.Entry{Key: cbortest.Uint(1), Val: cbortest.Uint(1)}, // kty: OKP
+		cbortest.Entry{Key: cbortest.Uint(3), Val: cbortest.NegInt(alg)},
+		cbortest.Entry{Key: cbortest.NegInt(-1), Val: cbortest.Uint(6)}, // crv: Ed25519
+		cbortest.Entry{Key: cbortest.NegInt(-2), Val: cbortest.Bytes(pub)},
 	)
 }
 

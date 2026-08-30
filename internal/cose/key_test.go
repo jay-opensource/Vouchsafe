@@ -2,6 +2,7 @@ package cose
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -199,17 +200,68 @@ func TestParse_RejectsUnsupportedKeyType(t *testing.T) {
 	}
 }
 
-func TestParse_RejectsOKPForNow(t *testing.T) {
+func TestParseOKP_Ed25519(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
 	enc := cbortest.Map(
 		cbortest.Entry{Key: cbortest.Uint(labelKty), Val: cbortest.Uint(ktyOKP)},
 		cbortest.Entry{Key: cbortest.Uint(labelAlg), Val: cbortest.NegInt(AlgEdDSA)},
+		cbortest.Entry{Key: cbortest.NegInt(labelOKPCrv), Val: cbortest.Uint(curveEd25519)},
+		cbortest.Entry{Key: cbortest.NegInt(labelOKPX), Val: cbortest.Bytes(pub)},
 	)
 	v, _, err := cbor.Decode(enc)
 	if err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	if _, err := Parse(v); !errors.Is(err, ErrUnsupportedKeyType) {
-		t.Fatalf("got %v, want ErrUnsupportedKeyType", err)
+
+	key, err := Parse(v)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if key.Alg != AlgEdDSA {
+		t.Fatalf("Alg = %d, want %d", key.Alg, AlgEdDSA)
+	}
+	got, ok := key.Public.(ed25519.PublicKey)
+	if !ok || !got.Equal(pub) {
+		t.Fatalf("parsed key does not match generated key")
+	}
+}
+
+func TestParseOKP_RejectsUnsupportedCurve(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	enc := cbortest.Map(
+		cbortest.Entry{Key: cbortest.Uint(labelKty), Val: cbortest.Uint(ktyOKP)},
+		cbortest.Entry{Key: cbortest.Uint(labelAlg), Val: cbortest.NegInt(AlgEdDSA)},
+		cbortest.Entry{Key: cbortest.NegInt(labelOKPCrv), Val: cbortest.Uint(99)}, // bogus curve id
+		cbortest.Entry{Key: cbortest.NegInt(labelOKPX), Val: cbortest.Bytes(pub)},
+	)
+	v, _, err := cbor.Decode(enc)
+	if err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	if _, err := Parse(v); !errors.Is(err, ErrUnsupportedCurve) {
+		t.Fatalf("got %v, want ErrUnsupportedCurve", err)
+	}
+}
+
+func TestParseOKP_RejectsWrongLengthX(t *testing.T) {
+	enc := cbortest.Map(
+		cbortest.Entry{Key: cbortest.Uint(labelKty), Val: cbortest.Uint(ktyOKP)},
+		cbortest.Entry{Key: cbortest.Uint(labelAlg), Val: cbortest.NegInt(AlgEdDSA)},
+		cbortest.Entry{Key: cbortest.NegInt(labelOKPCrv), Val: cbortest.Uint(curveEd25519)},
+		cbortest.Entry{Key: cbortest.NegInt(labelOKPX), Val: cbortest.Bytes([]byte{0x01, 0x02})}, // not 32 bytes
+	)
+	v, _, err := cbor.Decode(enc)
+	if err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	if _, err := Parse(v); !errors.Is(err, ErrMalformedKey) {
+		t.Fatalf("got %v, want ErrMalformedKey", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -135,11 +136,17 @@ func testRegisterRoundTrip(t *testing.T, alg int64) {
 		if !ok || !pub.Equal(v.PublicKey()) {
 			t.Fatalf("parsed RSA key does not match the harness's own key")
 		}
+	case cose.AlgEdDSA:
+		pub, ok := key.Public.(ed25519.PublicKey)
+		if !ok || !pub.Equal(v.PublicKey()) {
+			t.Fatalf("parsed Ed25519 key does not match the harness's own key")
+		}
 	}
 }
 
 func TestRegisterRoundTrip_ES256(t *testing.T) { testRegisterRoundTrip(t, cose.AlgES256) }
 func TestRegisterRoundTrip_RS256(t *testing.T) { testRegisterRoundTrip(t, cose.AlgRS256) }
+func TestRegisterRoundTrip_EdDSA(t *testing.T) { testRegisterRoundTrip(t, cose.AlgEdDSA) }
 
 // testAuthenticateRoundTrip is the strongest checkpoint: it verifies a
 // signature using a key that traveled through the entire Register ->
@@ -189,9 +196,10 @@ func testAuthenticateRoundTrip(t *testing.T, alg int64) {
 		t.Fatalf("SignCount = %d, want 2", ad.SignCount)
 	}
 
-	// Recompute the signed digest exactly as WebAuthn defines it and
+	// Recompute the signed-over bytes exactly as WebAuthn defines them and
 	// verify with the key that came out of the parser pipeline, not the
-	// harness's own private key struct.
+	// harness's own private key struct. ES256/RS256 verify against a
+	// SHA-256 digest of these bytes; EdDSA verifies the bytes directly.
 	cdHash := sha256.Sum256(assertion.ClientDataJSON)
 	signedOver := append(append([]byte(nil), assertion.AuthenticatorData...), cdHash[:]...)
 	digest := sha256.Sum256(signedOver)
@@ -207,11 +215,17 @@ func testAuthenticateRoundTrip(t *testing.T, alg int64) {
 		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], assertion.Signature); err != nil {
 			t.Fatalf("RS256 signature did not verify against the parsed public key: %v", err)
 		}
+	case cose.AlgEdDSA:
+		pub := key.Public.(ed25519.PublicKey)
+		if !ed25519.Verify(pub, signedOver, assertion.Signature) {
+			t.Fatalf("EdDSA signature did not verify against the parsed public key")
+		}
 	}
 }
 
 func TestAuthenticateRoundTrip_ES256(t *testing.T) { testAuthenticateRoundTrip(t, cose.AlgES256) }
 func TestAuthenticateRoundTrip_RS256(t *testing.T) { testAuthenticateRoundTrip(t, cose.AlgRS256) }
+func TestAuthenticateRoundTrip_EdDSA(t *testing.T) { testAuthenticateRoundTrip(t, cose.AlgEdDSA) }
 
 func TestWithZeroCounter(t *testing.T) {
 	v, err := New(cose.AlgES256, WithZeroCounter())

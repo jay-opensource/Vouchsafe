@@ -10,6 +10,7 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"errors"
@@ -37,9 +38,13 @@ const (
 	labelRSAN = -1
 	labelRSAE = -2
 
-	curveP256 = 1
-	curveP384 = 2
-	curveP521 = 3
+	curveP256    = 1
+	curveP384    = 2
+	curveP521    = 3
+	curveEd25519 = 6
+
+	labelOKPCrv = -1
+	labelOKPX   = -2
 
 	AlgES256 = -7
 	AlgEdDSA = -8
@@ -67,8 +72,7 @@ type Key struct {
 }
 
 // Parse decodes a COSE_Key CBOR map into a Go public key. Supports EC2
-// (ES256/P-256, plus P-384/P-521) and RSA (RS256). OKP/Ed25519 is
-// recognized but not yet implemented — Tier 2.
+// (ES256/P-256, plus P-384/P-521), RSA (RS256), and OKP/Ed25519 (EdDSA).
 func Parse(v cbor.Value) (Key, error) {
 	if v.Type != cbor.TypeMap {
 		return Key{}, fmt.Errorf("%w: not a CBOR map", ErrMalformedKey)
@@ -96,7 +100,11 @@ func Parse(v cbor.Value) (Key, error) {
 		}
 		return Key{Public: pub, Alg: alg.Int}, nil
 	case ktyOKP:
-		return Key{}, fmt.Errorf("%w: OKP/Ed25519", ErrUnsupportedKeyType)
+		pub, err := parseOKP(v)
+		if err != nil {
+			return Key{}, err
+		}
+		return Key{Public: pub, Alg: alg.Int}, nil
 	default:
 		return Key{}, fmt.Errorf("%w: kty %d", ErrUnsupportedKeyType, kty.Int)
 	}
@@ -154,6 +162,24 @@ func parseEC2(v cbor.Value) (*ecdsa.PublicKey, error) {
 		X:     new(big.Int).SetBytes(xVal.Bytes),
 		Y:     new(big.Int).SetBytes(yVal.Bytes),
 	}, nil
+}
+
+func parseOKP(v cbor.Value) (ed25519.PublicKey, error) {
+	crv, ok := v.MapGetInt(labelOKPCrv)
+	if !ok {
+		return nil, fmt.Errorf("%w: missing crv", ErrMalformedKey)
+	}
+	if crv.Int != curveEd25519 {
+		return nil, fmt.Errorf("%w: crv %d", ErrUnsupportedCurve, crv.Int)
+	}
+	xVal, ok := v.MapGetInt(labelOKPX)
+	if !ok || xVal.Type != cbor.TypeBytes {
+		return nil, fmt.Errorf("%w: missing or malformed x", ErrMalformedKey)
+	}
+	if len(xVal.Bytes) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("%w: x has wrong length for Ed25519", ErrMalformedKey)
+	}
+	return ed25519.PublicKey(append([]byte(nil), xVal.Bytes...)), nil
 }
 
 func parseRSA(v cbor.Value) (*rsa.PublicKey, error) {
