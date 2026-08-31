@@ -77,13 +77,20 @@ type userEntity struct {
 	DisplayName string `json:"displayName"`
 }
 
+type authenticatorSelection struct {
+	ResidentKey        string `json:"residentKey"`
+	RequireResidentKey bool   `json:"requireResidentKey"`
+	UserVerification   string `json:"userVerification"`
+}
+
 type creationOptions struct {
-	RP               relyingParty               `json:"rp"`
-	User             userEntity                 `json:"user"`
-	Challenge        string                     `json:"challenge"`
-	PubKeyCredParams []publicKeyCredentialParam `json:"pubKeyCredParams"`
-	Timeout          int64                      `json:"timeout"`
-	Attestation      string                     `json:"attestation"`
+	RP                     relyingParty               `json:"rp"`
+	User                   userEntity                 `json:"user"`
+	Challenge              string                     `json:"challenge"`
+	PubKeyCredParams       []publicKeyCredentialParam `json:"pubKeyCredParams"`
+	Timeout                int64                      `json:"timeout"`
+	Attestation            string                     `json:"attestation"`
+	AuthenticatorSelection authenticatorSelection     `json:"authenticatorSelection"`
 }
 
 func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +124,16 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		},
 		Timeout:     int64(ceremony.ChallengeTTL / time.Millisecond),
 		Attestation: "none",
+		// residentKey required: the demo's "Log in (usernameless)" path
+		// needs a discoverable credential, and browsers default to
+		// non-resident when this is left unset (verified against real
+		// Chromium: registration succeeds either way, but a subsequent
+		// discoverable login finds nothing and times out).
+		AuthenticatorSelection: authenticatorSelection{
+			ResidentKey:        "required",
+			RequireResidentKey: true,
+			UserVerification:   string(s.Registrar.UVPolicy),
+		},
 	})
 }
 

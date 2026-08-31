@@ -5,7 +5,7 @@ Every third-party package this project would normally need, and what actually re
 | Normally installed | What it does | Standard-library / hand-written replacement |
 |---|---|---|
 | `go-webauthn/webauthn`, `fxamacker/webauthn`, `duo-labs/webauthn` | The entire WebAuthn relying party | Hand-written ceremonies — `internal/ceremony` |
-| `fxamacker/cbor` | CBOR decoding (chosen upstream for "doesn't crash," 375+ tests, billions of fuzz executions) | Hand-written CTAP2 canonical decoder, ~250 lines — `internal/cbor`. Smaller pure-Go alternatives exist (`digitalbazaar/cbor`, `quartzjer/cb0r`) but are still third-party; the zero-dependency rule forces a hand-written decoder either way. |
+| `fxamacker/cbor` | CBOR decoding (chosen upstream for "doesn't crash," 375+ tests, billions of fuzz executions) | Hand-written CTAP2 canonical decoder, ~360 lines — `internal/cbor`. Smaller pure-Go alternatives exist (`digitalbazaar/cbor`, `quartzjer/cb0r`) but are still third-party; the zero-dependency rule forces a hand-written decoder either way. |
 | go-webauthn's internal COSE helpers | COSE_Key parsing (EC2, RSA, OKP/Ed25519) | Hand-written parser — `internal/cose`. Validates EC points via `crypto/ecdh.NewPublicKey` rather than the deprecated `crypto/elliptic.IsOnCurve`. |
 | — | ES256 signature verification | `crypto/ecdsa.VerifyASN1` |
 | — | RS256 signature verification | `crypto/rsa.VerifyPKCS1v15` |

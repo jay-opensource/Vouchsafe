@@ -1,0 +1,7 @@
+.git
+.gitignore
+*.exe
+/vouchsafe
+vouchsafe.json
+vouchsafe-*.json
+*.pem
